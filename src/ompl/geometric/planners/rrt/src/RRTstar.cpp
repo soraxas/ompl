@@ -49,9 +49,41 @@
 #include "ompl/tools/config/SelfConfig.h"
 #include "ompl/util/GeometricEquations.h"
 
+/////////////////////////////////////////////
+#include "cppm.hpp"
+#include "soraxas_cpp_toolbox/globals.h"
+#include "soraxas_cpp_toolbox/stats.h"
+/////////////////////////////////////////////
+#define DIFFEOMORPHIC_SAMPLER_FOR_MOVEIT yes
+#define CSPACE_NUM_DIM 6
+#define WORLDSPACE_NUM_DIM 3
+#include "DiffeomorphicStateSampler.hpp"
+using DiffeomorphicSamplerType = DiffeomorphicStateSampler<ompl_interface::JointModelStateSpace, CSPACE_NUM_DIM>;
+/////////////////////////////////////////////
+
+
 ompl::geometric::RRTstar::RRTstar(const base::SpaceInformationPtr &si)
   : base::Planner(si, "RRTstar")
 {
+    /////////////////////////////////////////////
+    Planner::declareParam_lambda<bool>(
+        "use_diff",
+        [this](bool in) {
+            std::cout << "----- setting use_diff as " << in << "-----" << std::endl;
+            diff__use_diff = in;
+        },
+        [this]() { return diff__use_diff; }, "0,1");
+    Planner::declareParam_lambda<int>(
+        "diff_batch_size", [this](int in) { diff__rand_batch_sample_size = in; },
+        [this]() { return diff__rand_batch_sample_size; }, "50:1:1000");
+    Planner::declareParam_lambda<double>(
+        "diff_epsilon", [this](double in) { diff__epsilon = in; }, [this]() { return diff__epsilon; }, "0.5:0.01:2.");
+    Planner::declareParam_lambda<int>(
+        "num_diff", [this](int in) { diff__num_drift = in; }, [this]() { return diff__num_drift; }, "2:1:10");
+    Planner::declareParam_lambda<double>(
+        "radius_of_joint", [this](double in) { diff__radius_of_joint = in; },
+        [this]() { return diff__radius_of_joint; }, "0.05,0.01:2.");
+    /////////////////////////////////////////////
     specs_.approximateSolutions = true;
     specs_.optimizingPaths = true;
     specs_.canReportIntermediateSolutions = true;
@@ -244,8 +276,17 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
     // our functor for sorting nearest neighbors
     CostIndexCompare compareFn(costs, *opt_);
 
+    auto &stats = sxs::g::get_stats();
+    stats.reset();
+    stats.set_stats_output_file(sxs::Stats::get_default_fname() + "_" + typeid(*this).name() + ".csv");
+    stats.of<long>("samp_ok") = 0;
+
+    auto timer = cppm::pm_timer(5);
     while (ptc == false)
     {
+        sleep(0.01);
+        stats.format_item(timer);
+        timer.update();
         iterations_++;
 
         // sample random state (with goal biasing)
@@ -265,6 +306,9 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
         // find closest state in the tree
         Motion *nmotion = nn_->nearest(rmotion);
 
+        stats.of<long>("samp_cnt") += 1;
+        if (si_->isValid(rstate))
+            stats.of<long>("samp_ok") += 1;
         if (intermediateSolutionCallback && si_->equalStates(nmotion->state, rstate))
             continue;
 
@@ -536,6 +580,15 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
             }
         }
 
+        stats.of<long>("created") = statesGenerated;
+        //        stats.of<long>("rewire") = rewireTest;
+        //        stats.of<long>("goalMotions") = goalMotions_.size();
+        stats.of<long>("startT") = nn_->size();
+        stats.of<double>("cost") = bestCost_.value();
+
+        stats.serialise_to_csv();
+
+
         // terminate if a sufficient solution is found
         if (bestGoalMotion_ && opt_->isSatisfied(bestCost_))
             break;
@@ -591,6 +644,12 @@ ompl::base::PlannerStatus ompl::geometric::RRTstar::solve(const base::PlannerTer
     if (rmotion->state)
         si_->freeState(rmotion->state);
     delete rmotion;
+
+//    stats.format_item(timer);
+    timer.finish();
+    std::static_pointer_cast<DiffeomorphicSamplerType>(sampler_)->finish_sampling();
+
+    sxs::g::print_all_stored_stats();
 
     OMPL_INFORM("%s: Created %u new states. Checked %u rewire options. %u goal states in tree. Final solution cost "
                 "%.3f",
@@ -1096,6 +1155,22 @@ void ompl::geometric::RRTstar::setOrderedSampling(bool orderSamples)
 
 void ompl::geometric::RRTstar::allocSampler()
 {
+    /////////////////////////////////////////////
+    sxs::g::storage::print_stored_info();
+    sxs::g::storage::clear();
+    sxs::g::storage::store<std::thread::id>("thread_id", std::this_thread::get_id());
+    sxs::g::storage::store("si", si_);
+
+    // replace the sampler to the diffeomorphic one
+    auto diff_sampler = std::make_shared<DiffeomorphicSamplerType>(
+        si_->getStateSpace().get(), diff__rand_batch_sample_size, diff__epsilon, diff__num_drift);
+
+    diff_sampler->use_diff = diff__use_diff;
+    diff_sampler->start_sampling();
+    sampler_ = diff_sampler;
+
+    return;
+
     // Allocate the appropriate type of sampler.
     if (useInformedSampling_)
     {

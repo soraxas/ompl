@@ -47,6 +47,19 @@
 
 #include "GoalVisitor.hpp"
 
+/////////////////////////////////////////////
+#include "cppm.hpp"
+#include "soraxas_cpp_toolbox/globals.h"
+#include "soraxas_cpp_toolbox/stats.h"
+/////////////////////////////////////////////
+#define DIFFEOMORPHIC_SAMPLER_FOR_MOVEIT yes
+#define CSPACE_NUM_DIM 6
+#define WORLDSPACE_NUM_DIM 3
+#include "DiffeomorphicStateSampler.hpp"
+using DiffeomorphicSamplerType = DiffeomorphicStateSampler<ompl_interface::JointModelStateSpace, CSPACE_NUM_DIM>;
+/////////////////////////////////////////////
+
+
 #define foreach BOOST_FOREACH
 
 namespace ompl
@@ -74,6 +87,27 @@ ompl::geometric::LazyPRM::LazyPRM(const base::SpaceInformationPtr &si, bool star
   , vertexValidityProperty_(boost::get(vertex_flags_t(), g_))
   , edgeValidityProperty_(boost::get(edge_flags_t(), g_))
 {
+
+    /////////////////////////////////////////////
+    Planner::declareParam_lambda<bool>(
+        "use_diff",
+        [this](bool in) {
+            std::cout << "----- setting use_diff as " << in << "-----" << std::endl;
+            diff__use_diff = in;
+        },
+        [this]() { return diff__use_diff; }, "0,1");
+    Planner::declareParam_lambda<int>(
+        "diff_batch_size", [this](int in) { diff__rand_batch_sample_size = in; },
+        [this]() { return diff__rand_batch_sample_size; }, "50:1:1000");
+    Planner::declareParam_lambda<double>(
+        "diff_epsilon", [this](double in) { diff__epsilon = in; }, [this]() { return diff__epsilon; }, "0.5:0.01:2.");
+    Planner::declareParam_lambda<int>(
+        "num_diff", [this](int in) { diff__num_drift = in; }, [this]() { return diff__num_drift; }, "2:1:10");
+    Planner::declareParam_lambda<double>(
+        "radius_of_joint", [this](double in) { diff__radius_of_joint = in; },
+        [this]() { return diff__radius_of_joint; }, "0.05,0.01:2.");
+    /////////////////////////////////////////////
+
     specs_.recognizedGoal = base::GOAL_SAMPLEABLE_REGION;
     specs_.approximateSolutions = false;
     specs_.optimizingPaths = true;
@@ -125,7 +159,7 @@ ompl::geometric::LazyPRM::LazyPRM(const base::PlannerData &data, bool starStrate
 
         specs_.multithreaded = false;  // temporarily set to false since nn_ is used only in single thread
         nn_.reset(tools::SelfConfig::getDefaultNearestNeighbors<Vertex>(this));
-        specs_.multithreaded = true;
+//        specs_.multithreaded = true;
         nn_->setDistanceFunction([this](const Vertex a, const Vertex b) { return distanceFunction(a, b); });
 
         for (size_t vertex_index = 0; vertex_index < data.numVertices(); ++vertex_index)
@@ -194,7 +228,23 @@ void ompl::geometric::LazyPRM::setup()
         setup_ = false;
     }
 
-    sampler_ = si_->allocStateSampler();
+//    sampler_ = si_->allocStateSampler();
+    /////////////////////////////////////////////
+    sxs::g::storage::print_stored_info();
+    sxs::g::storage::clear();
+    sxs::g::storage::store<std::thread::id>("thread_id", std::this_thread::get_id());
+    sxs::g::storage::store("si", si_);
+
+    // replace the sampler to the diffeomorphic one
+    auto diff_sampler = std::make_shared<DiffeomorphicSamplerType>(
+        si_->getStateSpace().get(), diff__rand_batch_sample_size, diff__epsilon, diff__num_drift);
+
+    diff_sampler->use_diff = diff__use_diff;
+    diff_sampler->start_sampling();
+    sampler_ = diff_sampler;
+
+    return;
+
 }
 
 void ompl::geometric::LazyPRM::setRange(double distance)
@@ -360,11 +410,23 @@ ompl::base::PlannerStatus ompl::geometric::LazyPRM::solve(const base::PlannerTer
     bool someSolutionFound = false;
     unsigned int optimizingComponentSegments = 0;
 
+    auto &stats = sxs::g::get_stats();
+    stats.reset();
+    stats.set_stats_output_file(sxs::Stats::get_default_fname() + "_" + typeid(*this).name() + ".csv");
+    stats.of<long>("samp_ok") = 0;
+
+    auto timer = cppm::pm_timer(20);
     // Grow roadmap in lazy fashion -- add vertices and edges without checking validity
     while (!ptc)
     {
+        sleep(0.01);
+        stats.format_item(timer);
+        timer.update();
         ++iterations_;
         sampler_->sampleUniform(workState);
+        stats.of<long>("samp_cnt") += 1;
+        if (si_->isValid(workState))
+            stats.of<long>("samp_ok") += 1;
         Vertex addedVertex = addMilestone(si_->cloneState(workState));
 
         const long int solComponent = solutionComponent(&startGoalPair);
@@ -400,7 +462,7 @@ ompl::base::PlannerStatus ompl::geometric::LazyPRM::solve(const base::PlannerTer
                     fullyOptimized = true;
                     bestSolution = solution;
                     bestCost_ = c;
-                    break;
+//                    break;
                 }
                 if (opt_->isCostBetterThan(c, bestCost_))
                 {
@@ -408,6 +470,14 @@ ompl::base::PlannerStatus ompl::geometric::LazyPRM::solve(const base::PlannerTer
                     bestCost_ = c;
                 }
             }
+
+            stats.of<long>("created") = -1;
+            //        stats.of<long>("rewire") = rewireTest;
+            //        stats.of<long>("goalMotions") = goalMotions_.size();
+            stats.of<long>("startT") = nn_->size();
+            stats.of<double>("cost") = bestCost_.value();
+
+            stats.serialise_to_csv();
         }
     }
 
@@ -421,6 +491,12 @@ ompl::base::PlannerStatus ompl::geometric::LazyPRM::solve(const base::PlannerTer
         psol.setOptimized(opt_, bestCost_, fullyOptimized);
         pdef_->addSolutionPath(psol);
     }
+
+    //    stats.format_item(timer);
+    timer.finish();
+    std::static_pointer_cast<DiffeomorphicSamplerType>(sampler_)->finish_sampling();
+
+    sxs::g::print_all_stored_stats();
 
     OMPL_INFORM("%s: Created %u states", getName().c_str(), boost::num_vertices(g_) - nrStartStates);
 
@@ -529,8 +605,12 @@ ompl::base::PathPtr ompl::geometric::LazyPRM::constructSolution(const Vertex &st
         const base::State *st = stateProperty_[pos];
         unsigned int &vd = vertexValidityProperty_[pos];
         if ((vd & VALIDITY_TRUE) == 0)
-            if (si_->isValid(st))
+            if (si_->isValid(st)) {
                 vd |= VALIDITY_TRUE;
+            }
+            else {
+
+            }
         if ((vd & VALIDITY_TRUE) == 0)
             milestonesToRemove.insert(pos);
         if (milestonesToRemove.empty())

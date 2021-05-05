@@ -53,6 +53,7 @@ else(MSVC)
     add_library(ompl SHARED ${OMPL_SOURCE_CODE})
 endif(MSVC)
 target_link_libraries(ompl
+    PUBLIC
     ${OMPL_LINK_LIBRARIES}
     ${Boost_SERIALIZATION_LIBRARY}
     ${Boost_FILESYSTEM_LIBRARY}
@@ -68,18 +69,78 @@ if (OMPL_EXTENSION_ODE)
 endif()
 
 if (OMPL_HAVE_SPOT)
-    target_link_libraries(ompl ${SPOT_LIBRARIES})
+    target_link_libraries(ompl PUBLIC ${SPOT_LIBRARIES})
 endif()
 
 if (MSVC)
     set_target_properties(ompl PROPERTIES VERSION "${PROJECT_VERSION}" STATIC_LIBRARY_FLAGS "psapi.lib ws2_32.lib")
 else (MSVC)
     if (MINGW)
-        target_link_libraries(ompl psapi ws2_32)
+        target_link_libraries(ompl PUBLIC psapi ws2_32)
         set_target_properties(ompl PROPERTIES LINK_FLAGS "-Wl,--export-all-symbols")
     endif (MINGW)
     set_target_properties(ompl PROPERTIES VERSION "${PROJECT_VERSION}" SOVERSION "${OMPL_ABI_VERSION}")
 endif (MSVC)
+
+##################################################################
+find_package(catkin REQUIRED)
+## NECESSARY DIR SETTINGS by user
+set(DIFF_SAMP_DIR $ENV{HOME}/research/diffeomorphic_sampler)
+#set(MOVEIT_SRC_ROOT $ENV{HOME}/ROS/ws_jaco-diff/src/moveit)
+set(MOVEIT_SRC_ROOT ${CMAKE_SOURCE_DIR}/../moveit)
+# typical var catkin_DIR=/opt/ros/noetic/share/catkin/cmake
+# we will walk backward to find system include path
+set(CATKIN_SYSTEM_INCLUDE "${catkin_DIR}/../../../include")
+##################################################################
+function(ensure_path_exists _dir)
+  if(NOT IS_DIRECTORY "${_dir}" OR NOT EXISTS "${_dir}")
+    message(FATAL_ERROR "The given directory '${_dir}' does not exists!")
+  endif()
+endfunction(ensure_path_exists)
+## Ensure path exists, sanity check!
+ensure_path_exists("${DIFF_SAMP_DIR}")
+ensure_path_exists("${MOVEIT_SRC_ROOT}")
+ensure_path_exists("${CATKIN_SYSTEM_INCLUDE}")
+##################################################################
+## add the actual source for diff sampler
+add_subdirectory(${DIFF_SAMP_DIR} diff-samp)
+#find_package(catkin REQUIRED COMPONENTS diffeomorphic_state_sampler)
+target_link_libraries(ompl PUBLIC diffeomorphic_state_sampler)
+##################################################################
+## Link to libtorch
+find_package(Torch REQUIRED)
+target_compile_features(ompl PRIVATE cxx_range_for)
+target_link_libraries(ompl PRIVATE ${TORCH_LIBRARIES})
+##################################################################
+## Include necessary headers from MoveIt
+target_include_directories(
+        ompl PRIVATE
+        ${MOVEIT_SRC_ROOT}/moveit_planners/ompl/ompl_interface/include
+        ${MOVEIT_SRC_ROOT}/moveit_core/robot_model/include
+        ${MOVEIT_SRC_ROOT}/moveit_core/macros/include
+        ${MOVEIT_SRC_ROOT}/moveit_core/exceptions/include
+        #
+        ${MOVEIT_SRC_ROOT}/../geometric_shapes/include
+        #/opt/ros/melodic/include
+        ${CATKIN_SYSTEM_INCLUDE}
+        ${CMAKE_INSTALL_FULL_INCLUDEDIR}
+)
+list(APPEND CMAKE_PREFIX_PATH ${CMAKE_INSTALL_PREFIX})  # the install prefix (devel) allows us to find self-built moveit
+find_package(
+  catkin REQUIRED
+  COMPONENTS
+  moveit_core
+)
+include_directories(SYSTEM ${catkin_INCLUDE_DIRS})
+##################################################################
+## Link to MoveIt interface for robot model
+#find_package(moveit_planners_ompl REQUIRED)
+#target_link_libraries(ompl PRIVATE moveit_ompl_interface)
+find_library(
+        MOVEIT_OMPL_INTERFACE_LIB moveit_ompl_interface
+        HINTS ${CATKIN_DEVEL_PREFIX}/lib)
+target_link_libraries(ompl PRIVATE ${MOVEIT_OMPL_INTERFACE_LIB})
+##################################################################
 
 # install the library
 install(TARGETS ompl

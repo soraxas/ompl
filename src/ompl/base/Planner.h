@@ -374,6 +374,27 @@ namespace ompl
         protected:
             /** \brief This function declares a parameter for this planner instance, and specifies the setter and getter
              * functions. */
+            template <typename T, typename SetterFunctor, typename GetterFunctor>
+            void declareParam_lambda(const std::string &name, const SetterFunctor
+                                                                 &setter,
+                              const GetterFunctor &getter, const std::string
+                                                         &rangeSuggestion = "")
+            {
+                params_.declareParam<T>(name,
+                                        [setter](T param)
+                                        {
+                                            setter(param);
+                                        },
+                                        [getter]
+                                        {
+                                            return getter();
+                                        });
+                if (!rangeSuggestion.empty())
+                    params_[name].setRangeSuggestion(rangeSuggestion);
+            }
+
+            /** \brief This function declares a parameter for this planner instance, and specifies the setter and getter
+             * functions. */
             template <typename T, typename PlannerType, typename SetterType, typename GetterType>
             void declareParam(const std::string &name, const PlannerType &planner, const SetterType &setter,
                               const GetterType &getter, const std::string &rangeSuggestion = "")

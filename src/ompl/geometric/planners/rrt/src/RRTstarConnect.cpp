@@ -1,36 +1,36 @@
 /*********************************************************************
-* Software License Agreement (BSD License)
-*
-*  Copyright (c) 2019, University of Malaya
-*  All rights reserved.
-*
-*  Redistribution and use in source and binary forms, with or without
-*  modification, are permitted provided that the following conditions
-*  are met:
-*
-*   * Redistributions of source code must retain the above copyright
-*     notice, this list of conditions and the following disclaimer.
-*   * Redistributions in binary form must reproduce the above
-*     copyright notice, this list of conditions and the following
-*     disclaimer in the documentation and/or other materials provided
-*     with the distribution.
-*   * Neither the name of the Willow Garage nor the names of its
-*     contributors may be used to endorse or promote products derived
-*     from this software without specific prior written permission.
-*
-*  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-*  "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-*  LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
-*  FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
-*  COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
-*  INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
-*  BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-*  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-*  CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-*  LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
-*  ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-*  POSSIBILITY OF SUCH DAMAGE.
-*********************************************************************/
+ * Software License Agreement (BSD License)
+ *
+ *  Copyright (c) 2019, University of Malaya
+ *  All rights reserved.
+ *
+ *  Redistribution and use in source and binary forms, with or without
+ *  modification, are permitted provided that the following conditions
+ *  are met:
+ *
+ *   * Redistributions of source code must retain the above copyright
+ *     notice, this list of conditions and the following disclaimer.
+ *   * Redistributions in binary form must reproduce the above
+ *     copyright notice, this list of conditions and the following
+ *     disclaimer in the documentation and/or other materials provided
+ *     with the distribution.
+ *   * Neither the name of the Willow Garage nor the names of its
+ *     contributors may be used to endorse or promote products derived
+ *     from this software without specific prior written permission.
+ *
+ *  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ *  "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ *  LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+ *  FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+ *  COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+ *  INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ *  BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ *  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ *  CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ *  LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+ *  ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ *  POSSIBILITY OF SUCH DAMAGE.
+ *********************************************************************/
 
 /* Author: Reza Mashayekhi */
 
@@ -47,22 +47,62 @@
 #include <limits>
 #include <vector>
 
+/////////////////////////////////////////////
+#define SXS_GLOBALS_SETUP_STORAGE
+#define CPPM_LIB_IMPL
+#include "cppm.hpp"
+#include "soraxas_cpp_toolbox/globals.h"
+#include "soraxas_cpp_toolbox/stats.h"
+/////////////////////////////////////////////
+#define DIFFEOMORPHIC_SAMPLER_FOR_MOVEIT yes
+#define CSPACE_NUM_DIM 6
+#define WORLDSPACE_NUM_DIM 3
+#include "DiffeomorphicStateSampler.hpp"
+using DiffeomorphicSamplerType = DiffeomorphicStateSampler<ompl_interface::JointModelStateSpace, CSPACE_NUM_DIM>;
+/////////////////////////////////////////////
+
 ompl::geometric::RRTstarConnect::RRTstarConnect(const base::SpaceInformationPtr &si)
   : base::Planner(si, "RRTstarConnect")
 {
+    /////////////////////////////////////////////
+    Planner::declareParam_lambda<bool>(
+        "use_diff",
+        [this](bool in) {
+            std::cout << "----- setting use_diff as " << in << "-----" << std::endl;
+            diff__use_diff = in;
+        },
+        [this]() { return diff__use_diff; }, "0,1");
+    Planner::declareParam_lambda<int>(
+        "diff_batch_size", [this](int in) { diff__rand_batch_sample_size = in; },
+        [this]() { return diff__rand_batch_sample_size; }, "50:1:1000");
+    Planner::declareParam_lambda<double>(
+        "diff_epsilon", [this](double in) { diff__epsilon = in; }, [this]() { return diff__epsilon; }, "0.5:0.01:2.");
+    Planner::declareParam_lambda<int>(
+        "num_diff", [this](int in) { diff__num_drift = in; }, [this]() { return diff__num_drift; }, "2:1:10");
+    Planner::declareParam_lambda<double>(
+        "radius_of_joint", [this](double in) { diff__radius_of_joint = in; },
+        [this]() { return diff__radius_of_joint; }, "0.05,0.01:2.");
+    /////////////////////////////////////////////
+
     specs_.recognizedGoal = base::GOAL_SAMPLEABLE_REGION;
     specs_.directed = true;
+    specs_.multithreaded = true;
 
     Planner::declareParam<double>("range", this, &RRTstarConnect::setRange, &RRTstarConnect::getRange, "0.:1.:10000.");
-    Planner::declareParam<double>("rewire_factor", this, &RRTstarConnect::setRewireFactor, &RRTstarConnect::getRewireFactor,
-                                  "1.0:0.01:2.0");
-    Planner::declareParam<bool>("use_k_nearest", this, &RRTstarConnect::setKNearest, &RRTstarConnect::getKNearest, "0,1");
-    Planner::declareParam<bool>("delay_collision_checking", this, &RRTstarConnect::setDelayCC, &RRTstarConnect::getDelayCC, "0,1");
+    Planner::declareParam<double>("rewire_factor", this, &RRTstarConnect::setRewireFactor,
+                                  &RRTstarConnect::getRewireFactor, "1.0:0.01:2.0");
+    Planner::declareParam<bool>("use_k_nearest", this, &RRTstarConnect::setKNearest, &RRTstarConnect::getKNearest,
+                                "0,1");
+    Planner::declareParam<bool>("delay_collision_checking", this, &RRTstarConnect::setDelayCC,
+                                &RRTstarConnect::getDelayCC, "0,1");
 
-    Planner::declareParam<bool>("informed_sampling", this, &RRTstarConnect::setInformedSampling, &RRTstarConnect::getInformedSampling, "0,1");
-    Planner::declareParam<bool>("tree_pruning", this, &RRTstarConnect::setTreePruning, &RRTstarConnect::getTreePruning, "0,1");
+    Planner::declareParam<bool>("informed_sampling", this, &RRTstarConnect::setInformedSampling,
+                                &RRTstarConnect::getInformedSampling, "0,1");
+    Planner::declareParam<bool>("tree_pruning", this, &RRTstarConnect::setTreePruning, &RRTstarConnect::getTreePruning,
+                                "0,1");
 
-    Planner::declareParam<bool>("pruned_measure", this, &RRTstarConnect::setPrunedMeasure, &RRTstarConnect::getPrunedMeasure, "0,1");
+    Planner::declareParam<bool>("pruned_measure", this, &RRTstarConnect::setPrunedMeasure,
+                                &RRTstarConnect::getPrunedMeasure, "0,1");
 
     bestConnectionPoint_ = std::make_pair<Motion *, Motion *>(nullptr, nullptr);
     connectionPoints_.clear();
@@ -153,7 +193,7 @@ void ompl::geometric::RRTstarConnect::freeMemory()
 
 void ompl::geometric::RRTstarConnect::clear()
 {
-	setup_ = false;
+    setup_ = false;
     Planner::clear();
     sampler_.reset();
     infSampler_.reset();
@@ -179,8 +219,9 @@ void ompl::geometric::RRTstarConnect::clear()
     startMotions_.clear();
 }
 
-ompl::geometric::RRTstarConnect::GrowState ompl::geometric::RRTstarConnect::growTree(TreeData &tree, TreeGrowingInfo &tgi,
-                                                                             Motion *rmotion)
+ompl::geometric::RRTstarConnect::GrowState ompl::geometric::RRTstarConnect::growTree(TreeData &tree,
+                                                                                     TreeGrowingInfo &tgi,
+                                                                                     Motion *rmotion)
 {
     /* find closest state in the tree */
     Motion *nmotion = tree->nearest(rmotion);
@@ -213,18 +254,18 @@ ompl::geometric::RRTstarConnect::GrowState ompl::geometric::RRTstarConnect::grow
         return TRAPPED;
     }
 
-	Motion *motion = new Motion(si_);
-	si_->copyState(motion->state, dstate);
-	motion->parent = nmotion;
-	motion->root = nmotion->root;
-	motion->isConnectionPoint = false;
+    Motion *motion = new Motion(si_);
+    si_->copyState(motion->state, dstate);
+    motion->parent = nmotion;
+    motion->root = nmotion->root;
+    motion->isConnectionPoint = false;
     motion->incCost = opt_->motionCost(nmotion->state, motion->state);
     motion->cost = opt_->combineCosts(nmotion->cost, motion->incCost);
 
-//	tgi.xmotion = motion;
+    //	tgi.xmotion = motion;
 
     // Find nearby neighbors of the new motion
-	std::vector<Motion *> nbh;
+    std::vector<Motion *> nbh;
 
     getNeighbors(tree, motion, nbh);
 
@@ -255,139 +296,140 @@ ompl::geometric::RRTstarConnect::GrowState ompl::geometric::RRTstarConnect::grow
     CostIndexCompare compareFn(costs, *opt_);
 
     // Finding the nearest neighbor to connect to
-	// By default, neighborhood states are sorted by cost, and collision checking
-	// is performed in increasing order of cost
-	if (delayCC_)
-	{
-		// calculate all costs and distances
-		for (std::size_t i = 0; i < nbh.size(); ++i)
-		{
-			incCosts[i] = opt_->motionCost(nbh[i]->state, motion->state);
-			costs[i] = opt_->combineCosts(nbh[i]->cost, incCosts[i]);
-		}
+    // By default, neighborhood states are sorted by cost, and collision checking
+    // is performed in increasing order of cost
+    if (delayCC_)
+    {
+        // calculate all costs and distances
+        for (std::size_t i = 0; i < nbh.size(); ++i)
+        {
+            incCosts[i] = opt_->motionCost(nbh[i]->state, motion->state);
+            costs[i] = opt_->combineCosts(nbh[i]->cost, incCosts[i]);
+        }
 
-		// sort the nodes
-		//
-		// we're using index-value pairs so that we can get at
-		// original, unsorted indices
-		for (std::size_t i = 0; i < nbh.size(); ++i)
-			sortedCostIndices[i] = i;
-		std::sort(sortedCostIndices.begin(), sortedCostIndices.begin() + nbh.size(), compareFn);
+        // sort the nodes
+        //
+        // we're using index-value pairs so that we can get at
+        // original, unsorted indices
+        for (std::size_t i = 0; i < nbh.size(); ++i)
+            sortedCostIndices[i] = i;
+        std::sort(sortedCostIndices.begin(), sortedCostIndices.begin() + nbh.size(), compareFn);
 
-		// collision check until a valid motion is found
-		//
-		// ASYMMETRIC CASE: it's possible that none of these
-		// neighbors are valid. This is fine, because motion
-		// already has a connection to the tree through
-		// nmotion (with populated cost fields!).
-		for (std::vector<std::size_t>::const_iterator i = sortedCostIndices.begin();
-			 i != sortedCostIndices.begin() + nbh.size(); ++i)
-		{
-			if (nbh[*i] == nmotion ||
-				((!useKNearest_ || si_->distance(nbh[*i]->state, motion->state) < maxDistance_) &&
-						(tgi.start ? si_->checkMotion(nbh[*i]->state, motion->state) :
-														si_->isValid(motion->state) && si_->checkMotion(motion->state, nbh[*i]->state))))
-			{
-				motion->incCost = incCosts[*i];
-				motion->cost = costs[*i];
-				motion->parent = nbh[*i];
-				valid[*i] = 1;
-				break;
-			}
-			else
-				valid[*i] = -1;
-		}
-	}
-	else  // if not delayCC
-	{
-		motion->incCost = opt_->motionCost(nmotion->state, motion->state);
-		motion->cost = opt_->combineCosts(nmotion->cost, motion->incCost);
-		// find which one we connect the new state to
-		for (std::size_t i = 0; i < nbh.size(); ++i)
-		{
-			if (nbh[i] != nmotion)
-			{
-				incCosts[i] = opt_->motionCost(nbh[i]->state, motion->state);
-				costs[i] = opt_->combineCosts(nbh[i]->cost, incCosts[i]);
-				if (opt_->isCostBetterThan(costs[i], motion->cost))
-				{
-					if ((!useKNearest_ || si_->distance(nbh[i]->state, motion->state) < maxDistance_) &&
-							(tgi.start ? si_->checkMotion(nbh[i]->state, motion->state) :
-									si_->isValid(motion->state) && si_->checkMotion(motion->state, nbh[i]->state)))
-					{
-						motion->incCost = incCosts[i];
-						motion->cost = costs[i];
-						motion->parent = nbh[i];
-						valid[i] = 1;
-					}
-					else
-						valid[i] = -1;
-				}
-			}
-			else
-			{
-				incCosts[i] = motion->incCost;
-				costs[i] = motion->cost;
-				valid[i] = 1;
-			}
-		}
-	}
+        // collision check until a valid motion is found
+        //
+        // ASYMMETRIC CASE: it's possible that none of these
+        // neighbors are valid. This is fine, because motion
+        // already has a connection to the tree through
+        // nmotion (with populated cost fields!).
+        for (std::vector<std::size_t>::const_iterator i = sortedCostIndices.begin();
+             i != sortedCostIndices.begin() + nbh.size(); ++i)
+        {
+            if (nbh[*i] == nmotion ||
+                ((!useKNearest_ || si_->distance(nbh[*i]->state, motion->state) < maxDistance_) &&
+                 (tgi.start ? si_->checkMotion(nbh[*i]->state, motion->state) :
+                              si_->isValid(motion->state) && si_->checkMotion(motion->state, nbh[*i]->state))))
+            {
+                motion->incCost = incCosts[*i];
+                motion->cost = costs[*i];
+                motion->parent = nbh[*i];
+                valid[*i] = 1;
+                break;
+            }
+            else
+                valid[*i] = -1;
+        }
+    }
+    else  // if not delayCC
+    {
+        motion->incCost = opt_->motionCost(nmotion->state, motion->state);
+        motion->cost = opt_->combineCosts(nmotion->cost, motion->incCost);
+        // find which one we connect the new state to
+        for (std::size_t i = 0; i < nbh.size(); ++i)
+        {
+            if (nbh[i] != nmotion)
+            {
+                incCosts[i] = opt_->motionCost(nbh[i]->state, motion->state);
+                costs[i] = opt_->combineCosts(nbh[i]->cost, incCosts[i]);
+                if (opt_->isCostBetterThan(costs[i], motion->cost))
+                {
+                    if ((!useKNearest_ || si_->distance(nbh[i]->state, motion->state) < maxDistance_) &&
+                        (tgi.start ? si_->checkMotion(nbh[i]->state, motion->state) :
+                                     si_->isValid(motion->state) && si_->checkMotion(motion->state, nbh[i]->state)))
+                    {
+                        motion->incCost = incCosts[i];
+                        motion->cost = costs[i];
+                        motion->parent = nbh[i];
+                        valid[i] = 1;
+                    }
+                    else
+                        valid[i] = -1;
+                }
+            }
+            else
+            {
+                incCosts[i] = motion->incCost;
+                costs[i] = motion->cost;
+                valid[i] = 1;
+            }
+        }
+    }
 
-	tree->add(motion);
-	tgi.xmotion = motion;
-	motion->parent->children.push_back(motion);
+    tree->add(motion);
+    tgi.xmotion = motion;
+    motion->parent->children.push_back(motion);
 
-	// update existing motions
-	for (std::size_t i = 0; i < nbh.size(); ++i)
-	{
-		if (nbh[i] != motion->parent)
-		{
-			base::Cost nbhIncCost;
-			if (opt_->isSymmetric())
-				nbhIncCost = incCosts[i];
-			else
-				nbhIncCost = opt_->motionCost(motion->state, nbh[i]->state);
-			base::Cost nbhNewCost = opt_->combineCosts(motion->cost, nbhIncCost);
-			if (opt_->isCostBetterThan(nbhNewCost, nbh[i]->cost))
-			{
-				if (valid[i] == 0)
-				{
-					validMotion = (!useKNearest_ || si_->distance(nbh[i]->state, motion->state) < maxDistance_) &&
-							(tgi.start ? si_->checkMotion(motion->state, nbh[i]->state) :
-									si_->isValid(motion->state) && si_->checkMotion(nbh[i]->state, motion->state));
+    // update existing motions
+    for (std::size_t i = 0; i < nbh.size(); ++i)
+    {
+        if (nbh[i] != motion->parent)
+        {
+            base::Cost nbhIncCost;
+            if (opt_->isSymmetric())
+                nbhIncCost = incCosts[i];
+            else
+                nbhIncCost = opt_->motionCost(motion->state, nbh[i]->state);
+            base::Cost nbhNewCost = opt_->combineCosts(motion->cost, nbhIncCost);
+            if (opt_->isCostBetterThan(nbhNewCost, nbh[i]->cost))
+            {
+                if (valid[i] == 0)
+                {
+                    validMotion =
+                        (!useKNearest_ || si_->distance(nbh[i]->state, motion->state) < maxDistance_) &&
+                        (tgi.start ? si_->checkMotion(motion->state, nbh[i]->state) :
+                                     si_->isValid(motion->state) && si_->checkMotion(nbh[i]->state, motion->state));
+                }
+                else
+                {
+                    validMotion = (valid[i] == 1);
+                }
 
-				}
-				else
-				{
-					validMotion = (valid[i] == 1);
-				}
+                if (validMotion)
+                {
+                    // Remove this node from its parent list
+                    removeFromParent(nbh[i]);
 
-				if (validMotion)
-				{
-					// Remove this node from its parent list
-					removeFromParent(nbh[i]);
+                    // Add this node to the new parent
+                    nbh[i]->parent = motion;
+                    nbh[i]->incCost = nbhIncCost;
+                    nbh[i]->cost = nbhNewCost;
+                    nbh[i]->parent->children.push_back(nbh[i]);
 
-					// Add this node to the new parent
-					nbh[i]->parent = motion;
-					nbh[i]->incCost = nbhIncCost;
-					nbh[i]->cost = nbhNewCost;
-					nbh[i]->parent->children.push_back(nbh[i]);
+                    // Update the costs of the node's children
+                    updateChildCosts(nbh[i]);
 
-					// Update the costs of the node's children
-					updateChildCosts(nbh[i]);
-
-					checkForSolution = true;
-				}
-			}
-		}
-	}
-
+                    checkForSolution = true;
+                }
+            }
+        }
+    }
 
     return reach ? REACHED : ADVANCED;
 }
 
 ompl::base::PlannerStatus ompl::geometric::RRTstarConnect::solve(const base::PlannerTerminationCondition &ptc)
 {
+    sxs::Timer timer_stamp;
+    timer_stamp.set_autoprint();
     checkValidity();
     auto *goal = dynamic_cast<base::GoalSampleableRegion *>(pdef_->getGoal().get());
 
@@ -421,11 +463,14 @@ ompl::base::PlannerStatus ompl::geometric::RRTstarConnect::solve(const base::Pla
         return base::PlannerStatus::INVALID_GOAL;
     }
 
+    timer_stamp.stamp("alloc");
+
     // Allocate a sampler if necessary
     if (!sampler_ && !infSampler_)
     {
         allocSampler();
     }
+    timer_stamp.stamp("fin_alloc");
 
     OMPL_INFORM("%s: Starting planning with %d states already in datastructure", getName().c_str(),
                 (int)(tStart_->size() + tGoal_->size()));
@@ -452,13 +497,23 @@ ompl::base::PlannerStatus ompl::geometric::RRTstarConnect::solve(const base::Pla
         OMPL_INFORM("%s: Initial k-nearest value of %u", getName().c_str(),
                     (unsigned int)std::ceil(k_rrt_ * log((double)(tStart_->size() + tGoal_->size() + 1u))));
     else
-        OMPL_INFORM(
-            "%s: Initial rewiring radius of %.2f", getName().c_str(),
-            std::min(maxDistance_, r_rrt_ * std::pow(log((double)(tStart_->size() + tGoal_->size() + 1u)) / ((double)(tStart_->size() + tGoal_->size() + 1u)),
-                                                     1 / (double)(si_->getStateDimension()))));
+        OMPL_INFORM("%s: Initial rewiring radius of %.2f", getName().c_str(),
+                    std::min(maxDistance_, r_rrt_ * std::pow(log((double)(tStart_->size() + tGoal_->size() + 1u)) /
+                                                                 ((double)(tStart_->size() + tGoal_->size() + 1u)),
+                                                             1 / (double)(si_->getStateDimension()))));
+    double run_for = 5;
+    //    sxs::g::stats.reset();
+    auto &stats = sxs::g::get_stats();
+    stats.reset();
+    stats.set_stats_output_file(sxs::Stats::get_default_fname() + "_" + typeid(*this).name() + ".csv");
+
+    auto timer = cppm::pm_timer(run_for);
     while (!ptc)
     {
-    	iterations_++;
+        sleep(0.01);
+        stats.format_item(timer);
+        timer.update();
+        iterations_++;
 
         TreeData &tree = startTree ? tStart_ : tGoal_;
         tgi.start = startTree;
@@ -484,12 +539,31 @@ ompl::base::PlannerStatus ompl::geometric::RRTstarConnect::solve(const base::Pla
             }
         }
 
+        timer_stamp.stamp("sampleUniform");
         /* sample random state */
         if (!sampleUniform(rmotion->state))
             continue;
+        timer_stamp.stamp("theRest");
+        //        stats.of<long>("samp_cnt") += 1;
+        //        double d;
+        //        if (si_->getStateValidityChecker()->isValid(rmotion->state, d))
+        //            stats.of<long>("samp_ok") += 1;
+        //    double* rstate_values =
+        //        rmotion->state->as<ompl_interface::JointModelStateSpace::StateType>()->values;
+        //    for (size_t i = 0; i < 6; ++i) {
+        //      std::cout << rstate_values[i] << " ";
+        //    }
+        //    std::cout << std::endl;
+        //  std::cout << d  << std::endl;
+        //        std::cout << si_->isValid(rmotion->state) << std::endl;
+        //        timer_stamp.stamp("rest");
 
         checkForSolution = false;
         GrowState gs = growTree(tree, tgi, rmotion);
+
+        stats.of<long>("samp_cnt") += 1;
+        if (gs != TRAPPED)
+            stats.of<long>("samp_ok") += 1;
 
         if (gs != TRAPPED)
         {
@@ -502,10 +576,14 @@ ompl::base::PlannerStatus ompl::geometric::RRTstarConnect::solve(const base::Pla
             if (gs != REACHED)
                 si_->copyState(rmotion->state, tgi.xstate);
 
+            GrowState gsc = gs;
+            /*
             GrowState gsc = ADVANCED;
             tgi.start = startTree;
             while (gsc == ADVANCED)
                 gsc = growTree(otherTree, tgi, rmotion);
+
+            */
 
             /* update distance between trees */
             const double newDist = tree->getDistanceFunction()(addedMotion, otherTree->nearest(addedMotion));
@@ -531,8 +609,8 @@ ompl::base::PlannerStatus ompl::geometric::RRTstarConnect::solve(const base::Pla
             }
             else
             {
-            	if(!(bestConnectionPoint_.first && bestConnectionPoint_.second))
-            		bestConnectionPoint_=std::pair<Motion *, Motion *>(startMotion, goalMotion);
+                if (!(bestConnectionPoint_.first && bestConnectionPoint_.second))
+                    bestConnectionPoint_ = std::pair<Motion *, Motion *>(startMotion, goalMotion);
                 // We didn't reach the goal, but if we were extending the start
                 // tree, then we can mark/improve the approximate path so far.
                 if (!startTree)
@@ -543,61 +621,80 @@ ompl::base::PlannerStatus ompl::geometric::RRTstarConnect::solve(const base::Pla
                     if (dist < approxdif)
                     {
                         approxdif = dist;
-                        approxsol = tgi.xmotion;
+                        //                        approxsol = tgi.xmotion;
                     }
                 }
             }
 
             if (checkForSolution)
-			{
-				bool updatedSolution = false;
-				if (!(bestConnectionPoint_.first && bestConnectionPoint_.second) && !connectionPoints_.empty())
-				{
-					// We have found our first solution, store it as the best. We only add one
-					// connection point at a time, so there can only be one connection point at this moment.
-					bestConnectionPoint_ = connectionPoints_.front();
-					bestCost_ = opt_->combineCosts(bestConnectionPoint_.first->cost, bestConnectionPoint_.second->cost);
-					updatedSolution = true;
+            {
+                bool updatedSolution = false;
+                if (!(bestConnectionPoint_.first && bestConnectionPoint_.second) && !connectionPoints_.empty())
+                {
+                    // We have found our first solution, store it as the best. We only add one
+                    // connection point at a time, so there can only be one connection point at this moment.
+                    bestConnectionPoint_ = connectionPoints_.front();
+                    bestCost_ = opt_->combineCosts(bestConnectionPoint_.first->cost, bestConnectionPoint_.second->cost);
+                    updatedSolution = true;
 
-					OMPL_INFORM("%s: Found an initial solution with a cost of %.2f in %u iterations (%u "
-								"vertices in both trees(%u in Start Tree and %u in Goal Tree))",
-								getName().c_str(), bestCost_, iterations_, tStart_->size() + tGoal_->size(), tStart_->size(), tGoal_->size());
-				}
-				else
-				{
-					// We already have a solution, iterate through the list of connection Points
-					// and see if there's any improvement.
-					for (auto &connectionPoint : connectionPoints_)
-					{
-						// Is this goal motion better than the (current) best?
-						if ((opt_->combineCosts(connectionPoint.first->cost, connectionPoint.second->cost).value()) < bestCost_.value())
-						{
-							bestConnectionPoint_ = connectionPoint;
-							bestCost_ = opt_->combineCosts(connectionPoint.first->cost, connectionPoint.second->cost);
-							updatedSolution = true;
+                    OMPL_INFORM("%s: Found an initial solution with a cost of %.2f in %u iterations (%u "
+                                "vertices in both trees(%u in Start Tree and %u in Goal Tree))",
+                                getName().c_str(), bestCost_, iterations_, tStart_->size() + tGoal_->size(),
+                                tStart_->size(), tGoal_->size());
 
-							// Check if it satisfies the optimization objective, if it does, break the for loop
-							if (opt_->isSatisfied(bestCost_))
-							{
-								break;
-							}
-						}
-					}
-				}
+                    //                    stats.of<double>("init_cost") = bestCost_.value();
+                    //                    stats.of<long>("init_iter") = iterations_;
+                    //                    stats.of<long>("init_v_start") = tStart_->size();
+                    //                    stats.of<long>("init_v_goal") = tGoal_->size();
 
-				if (updatedSolution)
-				{
-					if (useTreePruning_)
-					{
-						pruneTrees(bestCost_);
-					}
-				}
-			}
+                    // OMPL_INFORM("Returning the very first solution found.");
+                    // break;
+                }
+                else
+                {
+                    // We already have a solution, iterate through the list of connection Points
+                    // and see if there's any improvement.
+                    for (auto &connectionPoint : connectionPoints_)
+                    {
+                        // Is this goal motion better than the (current) best?
+                        if ((opt_->combineCosts(connectionPoint.first->cost, connectionPoint.second->cost).value()) <
+                            bestCost_.value())
+                        {
+                            bestConnectionPoint_ = connectionPoint;
+                            bestCost_ = opt_->combineCosts(connectionPoint.first->cost, connectionPoint.second->cost);
+                            updatedSolution = true;
+
+                            // Check if it satisfies the optimization objective, if it does, break the for loop
+                            if (opt_->isSatisfied(bestCost_))
+                            {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (updatedSolution)
+                {
+                    if (useTreePruning_)
+                    {
+                        pruneTrees(bestCost_);
+                    }
+                }
+            }
         }
 
+        stats.of<long>("created") = statesGenerated;
+        //        stats.of<long>("rewire") = rewireTest;
+        //        stats.of<long>("goalMotions") = goalMotions_.size();
+        stats.of<long>("startT") = tStart_->size();
+        stats.of<long>("goalT") = tGoal_->size();
+        stats.of<double>("cost") = bestCost_.value();
+
+        stats.serialise_to_csv();
+
         // terminate if a sufficient solution is found
-        if (bestConnectionPoint_.first && bestConnectionPoint_.second && opt_->isSatisfied(bestCost_))
-            break;
+        //        if (bestConnectionPoint_.first && bestConnectionPoint_.second && opt_->isSatisfied(bestCost_))
+        //            break;
     }
 
     si_->freeState(tgi.xstate);
@@ -608,7 +705,7 @@ ompl::base::PlannerStatus ompl::geometric::RRTstarConnect::solve(const base::Pla
     bool solutionFound = false;
     if (approxsol && !solved)
     {
-    	solutionFound = true;
+        solutionFound = true;
 
         Motion *solution = approxsol;
         std::vector<Motion *> mpath;
@@ -634,12 +731,11 @@ ompl::base::PlannerStatus ompl::geometric::RRTstarConnect::solve(const base::Pla
         // Does the solution satisfy the optimization objective?
         psol.setOptimized(opt_, approxsol->cost, opt_->isSatisfied(bestCost_));
 
-
         pdef_->addSolutionPath(psol);
     }
-    else if(bestConnectionPoint_.first && bestConnectionPoint_.second)
+    else if (bestConnectionPoint_.first && bestConnectionPoint_.second)
     {
-    	solutionFound = true;
+        solutionFound = true;
         Motion *solution = bestConnectionPoint_.first;
         std::vector<Motion *> mpath1;
         while (solution != nullptr)
@@ -652,7 +748,7 @@ ompl::base::PlannerStatus ompl::geometric::RRTstarConnect::solve(const base::Pla
         std::vector<Motion *> mpath2;
         while (solution != nullptr)
         {
-			mpath2.push_back(solution);
+            mpath2.push_back(solution);
             solution = solution->parent;
         }
 
@@ -672,19 +768,49 @@ ompl::base::PlannerStatus ompl::geometric::RRTstarConnect::solve(const base::Pla
             psol.setApproximate(approxdif);
 
         // Does the solution satisfy the optimization objective?
-        psol.setOptimized(opt_, opt_->combineCosts(bestConnectionPoint_.first->cost, bestConnectionPoint_.second->cost), opt_->isSatisfied(bestCost_));
-
+        psol.setOptimized(opt_, opt_->combineCosts(bestConnectionPoint_.first->cost, bestConnectionPoint_.second->cost),
+                          opt_->isSatisfied(bestCost_));
 
         pdef_->addSolutionPath(psol);
+
+        auto print_state = [](base::State *s) {
+            for (int i = 0; i < 6; ++i)
+                sxs::print(s->as<ompl_interface::JointModelStateSpace::StateType>()->values[i], ", ");
+            sxs::println("");
+        };
+
+        sxs::println("printing start-------");
+        print_state(startMotions_[0]->state);
+        sxs::println("printing goal-------");
+        print_state(goalMotions_[0]->state);
+        sxs::println("printing goal-------");
+        //        print_state(tGoal_);
+        sxs::println("printing path-------");
+        for (auto &&s : path->getStates())
+        {
+            print_state(s);
+            sxs::println("done one");
+        }
     }
 
+    //    stats.of<long>("created") = statesGenerated;
+    //    stats.of<long>("rewire") = rewireTest;
+    //    stats.of<long>("goalMotions") = goalMotions_.size();
+    //    stats.of<double>("cost") = bestCost_.value();
+    stats.format_item(timer);
+    timer.finish();
+    std::static_pointer_cast<DiffeomorphicSamplerType>(sampler_)->finish_sampling();
 
-    OMPL_INFORM("%s: Created %u new states. All states in both trees %u (%u start + %u goal). \nChecked %u rewire options. %u connection points in graph. Final solution cost "
+    OMPL_INFORM("%s: Created %u new states. All states in both trees %u (%u start + %u goal). \nChecked %u rewire "
+                "options. %u connection points in graph. Final solution cost "
                 "%.3f",
-                getName().c_str(), statesGenerated, tStart_->size() + tGoal_->size(),
-                tStart_->size(), tGoal_->size(), rewireTest, connectionPoints_.size(), bestCost_);
+                getName().c_str(), statesGenerated, tStart_->size() + tGoal_->size(), tStart_->size(), tGoal_->size(),
+                rewireTest, connectionPoints_.size(), bestCost_);
 
-	return base::PlannerStatus(solutionFound, bestConnectionPoint_.first== nullptr && bestConnectionPoint_.second== nullptr);
+    sxs::g::print_all_stored_stats();
+
+    return base::PlannerStatus(solutionFound,
+                               bestConnectionPoint_.first == nullptr && bestConnectionPoint_.second == nullptr);
 }
 
 void ompl::geometric::RRTstarConnect::removeFromParent(Motion *m)
@@ -759,8 +885,9 @@ void ompl::geometric::RRTstarConnect::getPlannerData(base::PlannerData &data) co
     }
 
     // Add the edge connecting the two trees
-    if(bestConnectionPoint_.first && bestConnectionPoint_.second)
-    	data.addEdge(data.vertexIndex(bestConnectionPoint_.first->state), data.vertexIndex(bestConnectionPoint_.second->state));
+    if (bestConnectionPoint_.first && bestConnectionPoint_.second)
+        data.addEdge(data.vertexIndex(bestConnectionPoint_.first->state),
+                     data.vertexIndex(bestConnectionPoint_.second->state));
 
     // Add some info.
     data.properties["approx goal distance REAL"] = ompl::toString(distanceBetweenTrees_);
@@ -784,9 +911,9 @@ int ompl::geometric::RRTstarConnect::pruneTrees(const base::Cost &pruneTreeCost)
     }
 
     if (fracBetter > pruneThreshold_)
-	{
-		numPruned = pruneTree(tStart_, bestCost_, true);
-		numPruned += pruneTree(tGoal_, bestCost_, false);
+    {
+        numPruned = pruneTree(tStart_, bestCost_, true);
+        numPruned += pruneTree(tGoal_, bestCost_, false);
     }
 
     return numPruned;
@@ -794,7 +921,7 @@ int ompl::geometric::RRTstarConnect::pruneTrees(const base::Cost &pruneTreeCost)
 
 int ompl::geometric::RRTstarConnect::pruneTree(TreeData &tree, const base::Cost &pruneTreeCost, bool isTreeStart)
 {
-	int numPruned = 0;
+    int numPruned = 0;
     // We are only pruning motions if they, AND all descendents, have a estimated cost greater than pruneTreeCost
     // The easiest way to do this is to find leaves that should be pruned and ascend up their ancestry until a
     // motion is found that is kept.
@@ -816,35 +943,34 @@ int ompl::geometric::RRTstarConnect::pruneTree(TreeData &tree, const base::Cost 
     // The list of chain vertices to recheck after pruning
     std::list<Motion *> chainsToRecheck;
 
-	tree->clear();
+    tree->clear();
 
-	if (isTreeStart)
-	{
+    if (isTreeStart)
+    {
+        // Put all the starts into the tStart_ structure and their children into the queue:
+        // We do this so that start states are never pruned.
+        for (auto &startMotion : startMotions_)
+        {
+            // Add to the tStart_
+            tree->add(startMotion);
 
-		// Put all the starts into the tStart_ structure and their children into the queue:
-		// We do this so that start states are never pruned.
-		for (auto &startMotion : startMotions_)
-		{
-			// Add to the tStart_
-			tree->add(startMotion);
+            // Add their children to the queue:
+            addChildrenToList(&motionQueue, startMotion);
+        }
+    }
+    else
+    {
+        // Put all the starts into the tGoal_ structure and their children into the queue:
+        // We do this so that start states are never pruned.
+        for (auto &goalMotion : goalMotions_)
+        {
+            // Add to the tGoal_
+            tree->add(goalMotion);
 
-			// Add their children to the queue:
-			addChildrenToList(&motionQueue, startMotion);
-		}
-	}
-	else
-	{
-		// Put all the starts into the tGoal_ structure and their children into the queue:
-		// We do this so that start states are never pruned.
-		for (auto &goalMotion : goalMotions_)
-		{
-			// Add to the tGoal_
-			tree->add(goalMotion);
-
-			// Add their children to the queue:
-			addChildrenToList(&motionQueue, goalMotion);
-		}
-	}
+            // Add their children to the queue:
+            addChildrenToList(&motionQueue, goalMotion);
+        }
+    }
 
     while (motionQueue.empty() == false)
     {
@@ -917,44 +1043,46 @@ int ompl::geometric::RRTstarConnect::pruneTree(TreeData &tree, const base::Cost 
             // If this leaf is a goal, remove it from the goal set
             if (leavesToPrune.front()->isConnectionPoint == true)
             {
-            	if(isTreeStart)
-            	{
-					// Warn if pruning the _best_ goal
-					if (leavesToPrune.front() == bestConnectionPoint_.first)
-					{
-						OMPL_ERROR("%s: Pruning the best connection point.", getName().c_str());
-					}
-					// Remove it
-					// Find the connection point to remove
-					for(auto cp : connectionPoints_)
-					{
-						if(cp.first == leavesToPrune.front())
-						{
-							cp.second->isConnectionPoint = false;
-							connectionPoints_.erase(std::remove(connectionPoints_.begin(), connectionPoints_.end(), cp),connectionPoints_.end());
-							break;
-						}
-					}
-            	}
-            	else
-            	{
-					// Warn if pruning the _best_ goal
-					if (leavesToPrune.front() == bestConnectionPoint_.second)
-					{
-						OMPL_ERROR("%s: Pruning the best connection point.", getName().c_str());
-					}
-					// Remove it
-					// Find the connection point to remove
-					for(auto cp : connectionPoints_)
-					{
-						if(cp.second == leavesToPrune.front())
-						{
-							cp.first->isConnectionPoint = false;
-							connectionPoints_.erase(std::remove(connectionPoints_.begin(), connectionPoints_.end(), cp),connectionPoints_.end());
-							break;
-						}
-					}
-            	}
+                if (isTreeStart)
+                {
+                    // Warn if pruning the _best_ goal
+                    if (leavesToPrune.front() == bestConnectionPoint_.first)
+                    {
+                        OMPL_ERROR("%s: Pruning the best connection point.", getName().c_str());
+                    }
+                    // Remove it
+                    // Find the connection point to remove
+                    for (auto cp : connectionPoints_)
+                    {
+                        if (cp.first == leavesToPrune.front())
+                        {
+                            cp.second->isConnectionPoint = false;
+                            connectionPoints_.erase(std::remove(connectionPoints_.begin(), connectionPoints_.end(), cp),
+                                                    connectionPoints_.end());
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    // Warn if pruning the _best_ goal
+                    if (leavesToPrune.front() == bestConnectionPoint_.second)
+                    {
+                        OMPL_ERROR("%s: Pruning the best connection point.", getName().c_str());
+                    }
+                    // Remove it
+                    // Find the connection point to remove
+                    for (auto cp : connectionPoints_)
+                    {
+                        if (cp.second == leavesToPrune.front())
+                        {
+                            cp.first->isConnectionPoint = false;
+                            connectionPoints_.erase(std::remove(connectionPoints_.begin(), connectionPoints_.end(), cp),
+                                                    connectionPoints_.end());
+                            break;
+                        }
+                    }
+                }
             }
 
             // Remove the leaf from its parent
@@ -1019,7 +1147,8 @@ int ompl::geometric::RRTstarConnect::pruneTree(TreeData &tree, const base::Cost 
     return numPruned;
 }
 
-void ompl::geometric::RRTstarConnect::addChildrenToList(std::queue<Motion *, std::deque<Motion *>> *motionList, Motion *motion)
+void ompl::geometric::RRTstarConnect::addChildrenToList(std::queue<Motion *, std::deque<Motion *>> *motionList,
+                                                        Motion *motion)
 {
     for (auto &child : motion->children)
     {
@@ -1027,76 +1156,80 @@ void ompl::geometric::RRTstarConnect::addChildrenToList(std::queue<Motion *, std
     }
 }
 
-bool ompl::geometric::RRTstarConnect::keepCondition(const Motion *motion, const base::Cost &threshold, bool isTreeStart) const
+bool ompl::geometric::RRTstarConnect::keepCondition(const Motion *motion, const base::Cost &threshold,
+                                                    bool isTreeStart) const
 {
     // We keep if the cost-to-come-heuristic of motion is <= threshold, by checking
     // if !(threshold < heuristic), as if b is not better than a, then a is better than, or equal to, b
     if (isTreeStart && bestConnectionPoint_.first && motion == bestConnectionPoint_.first)
-	{
-		// If the threshold is the theoretical minimum, bestConnectionPoint_ will sometimes fail the test due to floating point precision. Avoid that.
-		return true;
-	}
-	else if (!isTreeStart && bestConnectionPoint_.second && motion == bestConnectionPoint_.second)
-	{
-		return true;
-	}
+    {
+        // If the threshold is the theoretical minimum, bestConnectionPoint_ will sometimes fail the test due to
+        // floating point precision. Avoid that.
+        return true;
+    }
+    else if (!isTreeStart && bestConnectionPoint_.second && motion == bestConnectionPoint_.second)
+    {
+        return true;
+    }
     return !opt_->isCostBetterThan(threshold, solutionHeuristic(motion, isTreeStart));
 }
 
 ompl::base::Cost ompl::geometric::RRTstarConnect::solutionHeuristic(const Motion *motion, bool isTreeStart) const
 {
-	base::Cost costToCome = motion->cost;
-	if (isTreeStart)
-	{
-		if (useAdmissibleCostToCome_)
-		{
-	        // Start with infinite cost
-	        costToCome = opt_->infiniteCost();
+    base::Cost costToCome = motion->cost;
+    if (isTreeStart)
+    {
+        if (useAdmissibleCostToCome_)
+        {
+            // Start with infinite cost
+            costToCome = opt_->infiniteCost();
 
-	        // Find the min from each start
-	        for (auto &startMotion : startMotions_)
-	        {
-	            costToCome = opt_->betterCost(
-	                costToCome, opt_->motionCost(startMotion->state,
-	                                             motion->state));  // lower-bounding cost from the start to the state
-	        }
-		}
-		else
-		{
-			costToCome = motion->cost; // current cost from the state to the goal
-		}
-		const base::Cost costToGo =
-				opt_->costToGo(motion->state, pdef_->getGoal().get()); // lower-bounding cost from the state to the goal
-		return opt_->combineCosts(costToCome, costToGo);    // add the two costs
-	}
-	else
-	{
-		// The tree is goal tree
-		if (useAdmissibleCostToCome_)
-		{
-			// Start with infinite cost
-			costToCome = opt_->infiniteCost();
+            // Find the min from each start
+            for (auto &startMotion : startMotions_)
+            {
+                costToCome = opt_->betterCost(costToCome, opt_->motionCost(startMotion->state,
+                                                                           motion->state));  // lower-bounding cost from
+                                                                                             // the start to the state
+            }
+        }
+        else
+        {
+            costToCome = motion->cost;  // current cost from the state to the goal
+        }
+        const base::Cost costToGo =
+            opt_->costToGo(motion->state, pdef_->getGoal().get());  // lower-bounding cost from the state to the goal
+        return opt_->combineCosts(costToCome, costToGo);            // add the two costs
+    }
+    else
+    {
+        // The tree is goal tree
+        if (useAdmissibleCostToCome_)
+        {
+            // Start with infinite cost
+            costToCome = opt_->infiniteCost();
 
-			// Find the min from each goal
-			for (auto &goalMotion : goalMotions_)
-			{
-				costToCome = opt_->betterCost(costToCome,
-						opt_->motionCost(motion->state, goalMotion->state)); // lower-bounding cost from the goal to the state
-			}
-		}
-		else
-		{
-			costToCome = motion->cost; // current cost from the state to the goal
-		}
-		// Find the min from each start
-		base::Cost costToGo = opt_->infiniteCost();
-		for (auto &startMotion : startMotions_)
-		{
-			costToGo = opt_->betterCost(costToGo,
-					opt_->motionCost(motion->state, startMotion->state)); // lower-bounding cost from the start to the state
-		}
-		return opt_->combineCosts(costToCome, costToGo);    // add the two costs
-	}
+            // Find the min from each goal
+            for (auto &goalMotion : goalMotions_)
+            {
+                costToCome = opt_->betterCost(
+                    costToCome, opt_->motionCost(motion->state, goalMotion->state));  // lower-bounding cost from the
+                                                                                      // goal to the state
+            }
+        }
+        else
+        {
+            costToCome = motion->cost;  // current cost from the state to the goal
+        }
+        // Find the min from each start
+        base::Cost costToGo = opt_->infiniteCost();
+        for (auto &startMotion : startMotions_)
+        {
+            costToGo = opt_->betterCost(
+                costToGo, opt_->motionCost(motion->state, startMotion->state));  // lower-bounding cost from the start
+                                                                                 // to the state
+        }
+        return opt_->combineCosts(costToCome, costToGo);  // add the two costs
+    }
 }
 
 void ompl::geometric::RRTstarConnect::setTreePruning(const bool prune)
@@ -1206,6 +1339,26 @@ void ompl::geometric::RRTstarConnect::setInformedSampling(bool informedSampling)
 
 void ompl::geometric::RRTstarConnect::allocSampler()
 {
+    //    auto hilbert_map = HMDiff::load_from_cache("/home/soraxas/research/ompl2dplanner/hm_cache6.bin");
+    //    auto diff_sampler = std::make_shared<DiffeomorphicSamplerType>(
+    //        si_->getStateSpace().get(), hilbert_map, diff__rand_batch_sample_size, diff__epsilon, diff__num_drift);
+
+    /////////////////////////////////////////////
+    sxs::g::storage::print_stored_info();
+    sxs::g::storage::clear();
+    sxs::g::storage::store<std::thread::id>("thread_id", std::this_thread::get_id());
+    sxs::g::storage::store("si", si_);
+
+    // replace the sampler to the diffeomorphic one
+    auto diff_sampler = std::make_shared<DiffeomorphicSamplerType>(
+        si_->getStateSpace().get(), diff__rand_batch_sample_size, diff__epsilon, diff__num_drift);
+
+    diff_sampler->use_diff = diff__use_diff;
+    diff_sampler->start_sampling();
+    sampler_ = diff_sampler;
+
+    return;
+
     // Allocate the appropriate type of sampler.
     if (useInformedSampling_)
     {
@@ -1254,7 +1407,7 @@ void ompl::geometric::RRTstarConnect::calculateRewiringLowerBounds()
 
     // r_rrt > (2*(1+1/d))^(1/d)*(measure/ballvolume)^(1/d)
     // If we're not using the informed measure, prunedMeasure_ will be set to si_->getSpaceMeasure();
-    r_rrt_ =
-        rewireFactor_ *
-        std::pow(2 * (1.0 + 1.0 / dimDbl) * (prunedMeasure_ / unitNBallMeasure(si_->getStateDimension())), 1.0 / dimDbl);
+    r_rrt_ = rewireFactor_ *
+             std::pow(2 * (1.0 + 1.0 / dimDbl) * (prunedMeasure_ / unitNBallMeasure(si_->getStateDimension())),
+                      1.0 / dimDbl);
 }

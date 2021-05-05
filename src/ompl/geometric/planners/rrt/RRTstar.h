@@ -78,6 +78,12 @@ namespace ompl
 
             ~RRTstar() override;
 
+            bool diff__use_diff{true};
+            double diff__epsilon{0.5};
+            int diff__num_drift{2};
+            int diff__rand_batch_sample_size{400};
+            double diff__radius_of_joint{0.05};
+
             void getPlannerData(base::PlannerData &data) const override;
 
             base::PlannerStatus solve(const base::PlannerTerminationCondition &ptc) override;

@@ -39,9 +39,42 @@
 #include "ompl/tools/config/SelfConfig.h"
 #include "ompl/util/String.h"
 
+/////////////////////////////////////////////
+#include "cppm.hpp"
+#include "soraxas_cpp_toolbox/globals.h"
+#include "soraxas_cpp_toolbox/stats.h"
+/////////////////////////////////////////////
+#define DIFFEOMORPHIC_SAMPLER_FOR_MOVEIT yes
+#define CSPACE_NUM_DIM 6
+#define WORLDSPACE_NUM_DIM 3
+#include "DiffeomorphicStateSampler.hpp"
+using DiffeomorphicSamplerType = DiffeomorphicStateSampler<ompl_interface::JointModelStateSpace, CSPACE_NUM_DIM>;
+/////////////////////////////////////////////
+
+
 ompl::geometric::RRTConnect::RRTConnect(const base::SpaceInformationPtr &si, bool addIntermediateStates)
   : base::Planner(si, addIntermediateStates ? "RRTConnectIntermediate" : "RRTConnect")
 {
+    /////////////////////////////////////////////
+    Planner::declareParam_lambda<bool>(
+        "use_diff",
+        [this](bool in) {
+            std::cout << "----- setting use_diff as " << in << "-----" << std::endl;
+            diff__use_diff = in;
+        },
+        [this]() { return diff__use_diff; }, "0,1");
+    Planner::declareParam_lambda<int>(
+        "diff_batch_size", [this](int in) { diff__rand_batch_sample_size = in; },
+        [this]() { return diff__rand_batch_sample_size; }, "50:1:1000");
+    Planner::declareParam_lambda<double>(
+        "diff_epsilon", [this](double in) { diff__epsilon = in; }, [this]() { return diff__epsilon; }, "0.5:0.01:2.");
+    Planner::declareParam_lambda<int>(
+        "num_diff", [this](int in) { diff__num_drift = in; }, [this]() { return diff__num_drift; }, "2:1:10");
+    Planner::declareParam_lambda<double>(
+        "radius_of_joint", [this](double in) { diff__radius_of_joint = in; },
+        [this]() { return diff__radius_of_joint; }, "0.05,0.01:2.");
+    /////////////////////////////////////////////
+
     specs_.recognizedGoal = base::GOAL_SAMPLEABLE_REGION;
     specs_.directed = true;
 
@@ -215,8 +248,24 @@ ompl::base::PlannerStatus ompl::geometric::RRTConnect::solve(const base::Planner
     }
 
     if (!sampler_)
-        sampler_ = si_->allocStateSampler();
+    {
+//        sampler_ = si_->allocStateSampler();
+    /////////////////////////////////////////////
+    sxs::g::storage::print_stored_info();
+    sxs::g::storage::clear();
+    sxs::g::storage::store<std::thread::id>("thread_id", std::this_thread::get_id());
+    sxs::g::storage::store("si", si_);
 
+    // replace the sampler to the diffeomorphic one
+    auto diff_sampler = std::make_shared<DiffeomorphicSamplerType>(
+        si_->getStateSpace().get(), diff__rand_batch_sample_size, diff__epsilon, diff__num_drift);
+
+    diff_sampler->use_diff = diff__use_diff;
+    diff_sampler->start_sampling();
+    sampler_ = diff_sampler;
+
+//    return;
+    }
     OMPL_INFORM("%s: Starting planning with %d states already in datastructure", getName().c_str(),
                 (int)(tStart_->size() + tGoal_->size()));
 
@@ -230,8 +279,20 @@ ompl::base::PlannerStatus ompl::geometric::RRTConnect::solve(const base::Planner
     bool startTree = true;
     bool solved = false;
 
+    auto &stats = sxs::g::get_stats();
+    stats.reset();
+    stats.set_stats_output_file(sxs::Stats::get_default_fname() + "_" + typeid(*this).name() + ".csv");
+    stats.of<long>("samp_ok") = 0;
+
+    long cost = -1;
+
+    auto timer = cppm::pm_timer(5);
     while (!ptc)
     {
+        sleep(0.01);
+        stats.format_item(timer);
+        timer.update();
+
         TreeData &tree = startTree ? tStart_ : tGoal_;
         tgi.start = startTree;
         startTree = !startTree;
@@ -260,6 +321,9 @@ ompl::base::PlannerStatus ompl::geometric::RRTConnect::solve(const base::Planner
 
         GrowState gs = growTree(tree, tgi, rmotion);
 
+        stats.of<long>("samp_cnt") += 1;
+        if (si_->isValid(rstate))
+            stats.of<long>("samp_ok") += 1;
         if (gs != TRAPPED)
         {
             /* remember which motion was just added */
@@ -331,7 +395,8 @@ ompl::base::PlannerStatus ompl::geometric::RRTConnect::solve(const base::Planner
 
                 pdef_->addSolutionPath(path, false, 0.0, getName());
                 solved = true;
-                break;
+//                break;
+                cost = 1;
             }
             else
             {
@@ -350,6 +415,13 @@ ompl::base::PlannerStatus ompl::geometric::RRTConnect::solve(const base::Planner
                 }
             }
         }
+        stats.of<long>("created") = tStart_->size() + tGoal_->size();
+        //        stats.of<long>("rewire") = rewireTest;
+        //        stats.of<long>("goalMotions") = goalMotions_.size();
+        stats.of<long>("startT") = -1;
+        stats.of<double>("cost") = cost;
+
+        stats.serialise_to_csv();
     }
 
     si_->freeState(tgi.xstate);
@@ -375,6 +447,15 @@ ompl::base::PlannerStatus ompl::geometric::RRTConnect::solve(const base::Planner
         pdef_->addSolutionPath(path, true, approxdif, getName());
         return base::PlannerStatus::APPROXIMATE_SOLUTION;
     }
+
+    timer.finish();
+    std::static_pointer_cast<DiffeomorphicSamplerType>(sampler_)->finish_sampling();
+
+    sxs::g::print_all_stored_stats();
+
+    std::static_pointer_cast<DiffeomorphicSamplerType>(sampler_)->m_stats.set_stats_output_file(sxs::Stats::get_default_fname() +
+                                  "____validity.csv");
+    std::static_pointer_cast<DiffeomorphicSamplerType>(sampler_)->m_stats.serialise_to_csv();
 
     return solved ? base::PlannerStatus::EXACT_SOLUTION : base::PlannerStatus::TIMEOUT;
 }

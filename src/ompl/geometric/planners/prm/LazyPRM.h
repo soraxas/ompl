@@ -73,6 +73,12 @@ namespace ompl
         class LazyPRM : public base::Planner
         {
         public:
+            bool diff__use_diff{true};
+            double diff__epsilon{0.5};
+            int diff__num_drift{2};
+            int diff__rand_batch_sample_size{400};
+            double diff__radius_of_joint{0.05};
+
             struct vertex_state_t
             {
                 using kind = boost::vertex_property_tag;
