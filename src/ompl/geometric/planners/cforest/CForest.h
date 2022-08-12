@@ -93,6 +93,7 @@ namespace ompl
                 si->setMotionValidator(si_->getMotionValidator());
                 auto planner(std::make_shared<T>(si));
                 space->setPlanner(planner.get());
+                planner->setProblemDefinition(pdef_);
                 addPlannerInstanceInternal(planner);
             }
 
@@ -171,6 +172,7 @@ namespace ompl
                                   base::Cost cost);
 
         protected:
+        public:
             /** \brief Manages the call to solve() for each individual planner. */
             void solve(base::Planner *planner, const base::PlannerTerminationCondition &ptc);
 

@@ -112,20 +112,20 @@ set_package_properties(Eigen3 PROPERTIES
 find_package(Eigen3 REQUIRED)
 include_directories("${EIGEN3_INCLUDE_DIR}")
 
-set_package_properties(MORSE PROPERTIES
-    URL "https://www.openrobots.org/wiki/morse"
-    PURPOSE "OMPL includes a plugin for the MORSE Robot Simulation engine.")
-find_package(MORSE QUIET)
-set(OMPL_EXTENSION_MORSE ${MORSE_FOUND})
-
-set_package_properties(ODE PROPERTIES
-    URL "http://ode.org"
-    PURPOSE "The Open Dynamics Engine can be used as a \"black box\" for kinodynamic planning.")
-find_package(ODE QUIET)
-set(OMPL_EXTENSION_ODE ${ODE_FOUND})
-if (OMPL_EXTENSION_ODE)
-  include_directories(${ODE_INCLUDE_DIRS})
-endif()
+# set_package_properties(MORSE PROPERTIES
+#     URL "https://www.openrobots.org/wiki/morse"
+#     PURPOSE "OMPL includes a plugin for the MORSE Robot Simulation engine.")
+# find_package(MORSE QUIET)
+# set(OMPL_EXTENSION_MORSE ${MORSE_FOUND})
+#
+# set_package_properties(ODE PROPERTIES
+#     URL "http://ode.org"
+#     PURPOSE "The Open Dynamics Engine can be used as a \"black box\" for kinodynamic planning.")
+# find_package(ODE QUIET)
+# set(OMPL_EXTENSION_ODE ${ODE_FOUND})
+# if (OMPL_EXTENSION_ODE)
+#   include_directories(${ODE_INCLUDE_DIRS})
+# endif()
 
 set_package_properties(Triangle PROPERTIES
     URL "http://www.cs.cmu.edu/~quake/triangle.html"

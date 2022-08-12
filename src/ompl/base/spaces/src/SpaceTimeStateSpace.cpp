@@ -110,7 +110,7 @@ ompl::base::StateSpacePtr ompl::base::SpaceTimeStateSpace::getSpaceComponent()
     return components_[0];
 }
 
-ompl::base::TimeStateSpace * ompl::base::SpaceTimeStateSpace::getTimeComponent()
+const ompl::base::TimeStateSpace * ompl::base::SpaceTimeStateSpace::getTimeComponent() const
 {
     return components_[1]->as<TimeStateSpace>();
 }

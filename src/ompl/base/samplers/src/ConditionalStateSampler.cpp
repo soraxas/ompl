@@ -35,6 +35,7 @@
 /* Author: Francesco Grothe */
 
 #include "ompl/base/samplers/ConditionalStateSampler.h"
+#include <ompl/geometric/planners/cforest/CForestStateSpaceWrapper.h>
 
 ompl::base::ConditionalStateSampler::ConditionalStateSampler(const ompl::base::SpaceInformation *si,
                                                              ompl::base::Motion *&startMotion,
@@ -48,6 +49,13 @@ ompl::base::ConditionalStateSampler::ConditionalStateSampler(const ompl::base::S
   , sampleOldBatch_(sampleOldBatch)
 {
     name_ = "ConditionalSampler";
+
+    ompl::base::StateSpace *stateSpacePtr = si_->getStateSpace().get();
+    auto cforestStateSpace = dynamic_cast<ompl::base::CForestStateSpaceWrapper *>(stateSpacePtr);
+    if (cforestStateSpace)
+        stateSpacePtr = cforestStateSpace->space_;
+
+    spaceTimeStateSpacePtr = stateSpacePtr->as<ompl::base::SpaceTimeStateSpace>();
 }
 
 bool ompl::base::ConditionalStateSampler::sample(ompl::base::State *state)
@@ -60,7 +68,7 @@ bool ompl::base::ConditionalStateSampler::sample(ompl::base::State *state)
         double startBound = startMotion_->state->as<base::CompoundState>()
                                 ->as<base::TimeStateSpace::StateType>(1)
                                 ->position +
-                            si_->getStateSpace()->as<base::SpaceTimeStateSpace>()->timeToCoverDistance(
+                            spaceTimeStateSpacePtr->timeToCoverDistance(
                                 state, startMotion_->state);
         // sample old batch
         if (sampleOldBatch_)
@@ -73,9 +81,9 @@ bool ompl::base::ConditionalStateSampler::sample(ompl::base::State *state)
                 double t = goal->state->as<base::CompoundState>()
                                ->as<base::TimeStateSpace::StateType>(1)
                                ->position -
-                           si_->getStateSpace()->as<base::SpaceTimeStateSpace>()->timeToCoverDistance(
+                           spaceTimeStateSpacePtr->timeToCoverDistance(
                                goal->state, state);
-                if (t > rightBound)
+                if (std::isfinite(t) && t > rightBound)
                 {
                     rightBound = t;
                 }
@@ -91,9 +99,9 @@ bool ompl::base::ConditionalStateSampler::sample(ompl::base::State *state)
                 double t = goal->state->as<base::CompoundState>()
                                ->as<base::TimeStateSpace::StateType>(1)
                                ->position -
-                           si_->getStateSpace()->as<base::SpaceTimeStateSpace>()->timeToCoverDistance(
+                           spaceTimeStateSpacePtr->timeToCoverDistance(
                                goal->state, state);
-                if (t > rightBound)
+                if (std::isfinite(t) && t > rightBound)
                 {
                     rightBound = t;
                 }
@@ -106,7 +114,7 @@ bool ompl::base::ConditionalStateSampler::sample(ompl::base::State *state)
                 double t = goal->state->as<base::CompoundState>()
                                ->as<base::TimeStateSpace::StateType>(1)
                                ->position -
-                           si_->getStateSpace()->as<base::SpaceTimeStateSpace>()->timeToCoverDistance(
+                           spaceTimeStateSpacePtr->timeToCoverDistance(
                                goal->state, state);
                 if (t > leftBound && t < rightBound)
                 {

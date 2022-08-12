@@ -50,9 +50,49 @@ namespace ompl
         class SpaceTimeStateSpace : public CompoundStateSpace
         {
         public:
+            /** \brief The definition of a state in SpaceTime */
+            class StateType : public CompoundStateSpace::StateType
+            {
+            public:
+                StateType() : CompoundStateSpace::StateType()
+                {
+                }
+
+                const ompl::base::State *getSpaceComponent() const
+                {
+                    return as<ompl::base::State>(0);
+                }
+
+                ompl::base::State *getSpaceComponent()
+                {
+                    return as<ompl::base::State>(0);
+                }
+
+                const ompl::base::TimeStateSpace::StateType *getTimeComponent() const
+                {
+                    return as<ompl::base::TimeStateSpace::StateType>(1);
+                }
+
+                ompl::base::TimeStateSpace::StateType *getTimeComponent()
+                {
+                    return as<ompl::base::TimeStateSpace::StateType>(1);
+                }
+
+                double getTime() const
+                {
+                    return getTimeComponent()->position;
+                }
+
+                double &getTime()
+                {
+                    return getTimeComponent()->position;
+                }
+            };
+
             /** \brief Constructor. The maximum velocity and the weight of the time component for distance calculation
                 need to be specified. */
-            explicit SpaceTimeStateSpace(const StateSpacePtr& spaceComponent, double vMax = 1.0, double timeWeight = 0.5);
+            explicit SpaceTimeStateSpace(const StateSpacePtr &spaceComponent, double vMax = 1.0,
+                                         double timeWeight = 0.5);
 
             /** \brief The distance from state1 to state2. May be infinite.
              *
@@ -63,16 +103,16 @@ namespace ompl
             double distance(const ompl::base::State *state1, const ompl::base::State *state2) const override;
 
             /** \brief The time to get from state1 to state2 with respect to vMax. */
-            double timeToCoverDistance(const ompl::base::State *state1, const ompl::base::State *state2) const;
+            virtual double timeToCoverDistance(const ompl::base::State *state1, const ompl::base::State *state2) const;
 
             /** \brief The distance of just the space component. */
             double distanceSpace(const ompl::base::State *state1, const ompl::base::State *state2) const;
 
             /** \brief The distance of just the time component. */
-            double distanceTime(const ompl::base::State *state1, const ompl::base::State *state2) const;
+            virtual double distanceTime(const ompl::base::State *state1, const ompl::base::State *state2) const;
 
             /** \brief The time value of the given state. */
-            static double getStateTime(const ompl::base::State *state) ;
+            static double getStateTime(const ompl::base::State *state);
 
             /** \brief Set lower and upper time bounds for the time component. */
             void setTimeBounds(double lb, double ub);
@@ -87,7 +127,7 @@ namespace ompl
             StateSpacePtr getSpaceComponent();
 
             /** \brief The time component as a TimeStateSpace pointer. */
-            TimeStateSpace * getTimeComponent();
+            const TimeStateSpace *getTimeComponent() const;
 
             /** \brief No metric state space, as the triangle inequality is not satisfied. */
             bool isMetricSpace() const override;
@@ -105,7 +145,7 @@ namespace ompl
             /** \brief The epsilon for time distance calculation. */
             double eps_ = std::numeric_limits<float>::epsilon();
         };
-    }
-}
+    }  // namespace base
+}  // namespace ompl
 
 #endif
