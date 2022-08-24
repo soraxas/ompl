@@ -248,6 +248,8 @@ void ompl::geometric::CForest::newSolutionFound(const base::Planner *planner,
                 ++numStatesShared_;
             }
         }
+        if (_newSoultionCallback)
+          _newSoultionCallback(planner, states, cost);
     }
     newSolutionFoundMutex_.unlock();
 

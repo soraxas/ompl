@@ -208,6 +208,8 @@ namespace ompl
 
             /** \brief Default number of threads to use when no planner instances are specified by the user */
             unsigned int numThreads_;
+
+            std::function<void (const base::Planner *, const std::vector<const base::State *> &, const base::Cost)> _newSoultionCallback;
         };
     }
 }
