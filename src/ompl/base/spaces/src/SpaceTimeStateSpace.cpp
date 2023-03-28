@@ -105,7 +105,7 @@ double ompl::base::SpaceTimeStateSpace::timeToCoverDistance(const ompl::base::St
     return deltaSpace / vMax_;
 }
 
-ompl::base::StateSpacePtr ompl::base::SpaceTimeStateSpace::getSpaceComponent()
+ompl::base::StateSpacePtr ompl::base::SpaceTimeStateSpace::getSpaceComponent() const
 {
     return components_[0];
 }

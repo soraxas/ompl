@@ -124,7 +124,7 @@ namespace ompl
             void setVMax(double vMax);
 
             /** \brief The space component as a StateSpacePtr. */
-            StateSpacePtr getSpaceComponent();
+            StateSpacePtr getSpaceComponent() const;
 
             /** \brief The time component as a TimeStateSpace pointer. */
             const TimeStateSpace *getTimeComponent() const;
